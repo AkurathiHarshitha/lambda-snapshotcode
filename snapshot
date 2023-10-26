@@ -1,0 +1,53 @@
+import boto3
+
+ec2 = boto3.client('ec2', region_name='us-east-1')
+ses = boto3.client('ses', region_name='us-east-1')
+
+def lambda_handler(event, context):
+    instance_id = 'i-0fd9ed775cc23c61a'  # Replace with your EC2 instance ID
+    description = 'Snapshot created by Lambda'
+
+    # Retrieve the EBS volume ID associated with the instance
+    reservations = ec2.describe_instances(InstanceIds=[instance_id])['Reservations']
+    if reservations:
+        instance = reservations[0]['Instances'][0]
+        block_devices = instance.get('BlockDeviceMappings', [])
+        for device in block_devices:
+            volume_id = device.get('Ebs', {}).get('VolumeId')
+            if volume_id:
+                # Check if there is an existing snapshot for the volume
+                snapshots = ec2.describe_snapshots(Filters=[{'Name': 'volume-id', 'Values': [volume_id]}])  # Fixed syntax here
+                for snapshot in snapshots['Snapshots']:
+                    ec2.delete_snapshot(SnapshotId=snapshot['SnapshotId'])
+
+                # Create a new snapshot
+                response = ec2.create_snapshot(Description=description, VolumeId=volume_id)
+                snapshot_id = response["SnapshotId"]
+
+                # Send an email with the snapshot ID
+                send_email(snapshot_id)
+                return {
+                    'statusCode': 200,
+                    'body': f'Snapshot created: {snapshot_id}'
+                }
+
+    return {
+        'statusCode': 404,
+        'body': 'EBS volume not found for the instance'
+    }
+
+def send_email(snapshot_id):
+    subject = 'EC2 Snapshot Created'
+    body = f'A new EC2 snapshot has been created with ID: {snapshot_id}'
+    sender = 'shankarm@eficensit.com'  # Replace with your verified SES email
+    recipient = 'harshithaa@eficensit.com'  # Replace with the recipient's email
+
+    response = ses.send_email(
+        Source=sender,
+        Destination={'ToAddresses': ['harshithaa@eficensit.com']},  # Fixed syntax here
+        Message={
+            'Subject': {'Data': subject},
+            'Body': {'Text': {'Data': body}}
+        }
+    )
+    print(f'Email sent with message ID: {response["MessageId"]}')
